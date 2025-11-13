@@ -22,7 +22,7 @@ app.use(
 app.use(express.json());
 
 // ===================================
-// MONGODB CONNECTION
+// MONGODB CONNECTION (CACHED)
 // ===================================
 const uri = process.env.MONGODB_URI;
 
@@ -31,38 +31,34 @@ if (!uri) {
   process.exit(1);
 }
 
-const client = new MongoClient(uri, {
-  serverApi: {
-    version: ServerApiVersion.v1,
-    strict: true,
-    deprecationErrors: true,
-  },
-});
+let cachedClient = null;
+let cachedDb = null;
 
-// Database collections (will be initialized after connection)
-let cropsCollection;
-let usersCollection;
-
-// ===================================
-// CONNECT TO DATABASE
-// ===================================
-async function connectDB() {
-  try {
-    await client.connect();
-    console.log("✅ Successfully connected to MongoDB!");
-
-    const db = client.db("krishiLinkDB");
-    cropsCollection = db.collection("crops");
-    usersCollection = db.collection("users");
-
-    console.log("📡 Database collections initialized");
-  } catch (error) {
-    console.error("❌ Error connecting to MongoDB:", error);
+async function connectToDatabase() {
+  if (cachedClient && cachedDb) {
+    console.log("✅ Using cached database connection");
+    return { client: cachedClient, db: cachedDb };
   }
-}
 
-// Initialize connection
-connectDB();
+  console.log("🔌 Creating new database connection...");
+
+  const client = new MongoClient(uri, {
+    serverApi: {
+      version: ServerApiVersion.v1,
+      strict: true,
+      deprecationErrors: true,
+    },
+  });
+
+  await client.connect();
+  const db = client.db("krishiLinkDB");
+
+  cachedClient = client;
+  cachedDb = db;
+
+  console.log("✅ Connected to MongoDB!");
+  return { client, db };
+}
 
 // ===================================
 // ROOT ROUTE
@@ -83,12 +79,20 @@ app.get("/", (req, res) => {
 // ===================================
 // HEALTH CHECK
 // ===================================
-app.get("/health", (req, res) => {
-  res.json({
-    status: "healthy",
-    timestamp: new Date(),
-    database: cropsCollection ? "connected" : "disconnected",
-  });
+app.get("/health", async (req, res) => {
+  try {
+    const { db } = await connectToDatabase();
+    res.json({
+      status: "healthy",
+      timestamp: new Date(),
+      database: db ? "connected" : "disconnected",
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: "unhealthy",
+      error: error.message,
+    });
+  }
 });
 
 // ===================================
@@ -98,6 +102,9 @@ app.get("/health", (req, res) => {
 // Get all crops (with optional search)
 app.get("/crops", async (req, res) => {
   try {
+    const { db } = await connectToDatabase();
+    const cropsCollection = db.collection("crops");
+
     const { search } = req.query;
     let query = {};
 
@@ -124,11 +131,15 @@ app.get("/crops", async (req, res) => {
 // Get latest 6 crops
 app.get("/crops/latest", async (req, res) => {
   try {
+    const { db } = await connectToDatabase();
+    const cropsCollection = db.collection("crops");
+
     const crops = await cropsCollection
       .find()
       .sort({ _id: -1 })
       .limit(6)
       .toArray();
+
     res.json(crops);
   } catch (error) {
     console.error("Error fetching latest crops:", error);
@@ -141,6 +152,9 @@ app.get("/crops/latest", async (req, res) => {
 // Get single crop by ID
 app.get("/crops/:id", async (req, res) => {
   try {
+    const { db } = await connectToDatabase();
+    const cropsCollection = db.collection("crops");
+
     const id = req.params.id;
     const crop = await cropsCollection.findOne({ _id: new ObjectId(id) });
 
@@ -160,10 +174,14 @@ app.get("/crops/:id", async (req, res) => {
 // Get crops by owner email
 app.get("/my-crops/:email", async (req, res) => {
   try {
+    const { db } = await connectToDatabase();
+    const cropsCollection = db.collection("crops");
+
     const email = req.params.email;
     const crops = await cropsCollection
       .find({ "owner.ownerEmail": email })
       .toArray();
+
     res.json(crops);
   } catch (error) {
     console.error("Error fetching user crops:", error);
@@ -176,11 +194,15 @@ app.get("/my-crops/:email", async (req, res) => {
 // Add new crop
 app.post("/crops", async (req, res) => {
   try {
+    const { db } = await connectToDatabase();
+    const cropsCollection = db.collection("crops");
+
     const crop = {
       ...req.body,
       interests: [],
       createdAt: new Date(),
     };
+
     const result = await cropsCollection.insertOne(crop);
     res.json(result);
   } catch (error) {
@@ -194,6 +216,9 @@ app.post("/crops", async (req, res) => {
 // Update crop
 app.put("/crops/:id", async (req, res) => {
   try {
+    const { db } = await connectToDatabase();
+    const cropsCollection = db.collection("crops");
+
     const id = req.params.id;
     const updatedCrop = req.body;
 
@@ -203,6 +228,7 @@ app.put("/crops/:id", async (req, res) => {
       { _id: new ObjectId(id) },
       { $set: updatedCrop }
     );
+
     res.json(result);
   } catch (error) {
     console.error("Error updating crop:", error);
@@ -215,8 +241,12 @@ app.put("/crops/:id", async (req, res) => {
 // Delete crop
 app.delete("/crops/:id", async (req, res) => {
   try {
+    const { db } = await connectToDatabase();
+    const cropsCollection = db.collection("crops");
+
     const id = req.params.id;
     const result = await cropsCollection.deleteOne({ _id: new ObjectId(id) });
+
     res.json(result);
   } catch (error) {
     console.error("Error deleting crop:", error);
@@ -233,6 +263,9 @@ app.delete("/crops/:id", async (req, res) => {
 // Add interest to a crop
 app.post("/interests", async (req, res) => {
   try {
+    const { db } = await connectToDatabase();
+    const cropsCollection = db.collection("crops");
+
     const interest = req.body;
     const cropId = interest.cropId;
 
@@ -276,6 +309,9 @@ app.post("/interests", async (req, res) => {
 // Get user's interests
 app.get("/my-interests/:email", async (req, res) => {
   try {
+    const { db } = await connectToDatabase();
+    const cropsCollection = db.collection("crops");
+
     const email = req.params.email;
 
     const crops = await cropsCollection
@@ -309,6 +345,9 @@ app.get("/my-interests/:email", async (req, res) => {
 // Update interest status (accept/reject)
 app.put("/interests/status", async (req, res) => {
   try {
+    const { db } = await connectToDatabase();
+    const cropsCollection = db.collection("crops");
+
     const { interestId, cropId, status } = req.body;
 
     const crop = await cropsCollection.findOne({ _id: new ObjectId(cropId) });
@@ -346,10 +385,12 @@ app.put("/interests/status", async (req, res) => {
     res.json(result);
   } catch (error) {
     console.error("Error updating interest status:", error);
-    res.status(500).json({
-      message: "Failed to update interest status",
-      error: error.message,
-    });
+    res
+      .status(500)
+      .json({
+        message: "Failed to update interest status",
+        error: error.message,
+      });
   }
 });
 
@@ -360,12 +401,16 @@ app.put("/interests/status", async (req, res) => {
 // Save/update user
 app.post("/users", async (req, res) => {
   try {
+    const { db } = await connectToDatabase();
+    const usersCollection = db.collection("users");
+
     const user = req.body;
     const result = await usersCollection.updateOne(
       { email: user.email },
       { $set: user },
       { upsert: true }
     );
+
     res.json(result);
   } catch (error) {
     console.error("Error saving user:", error);
@@ -378,8 +423,12 @@ app.post("/users", async (req, res) => {
 // Get user by email
 app.get("/users/:email", async (req, res) => {
   try {
+    const { db } = await connectToDatabase();
+    const usersCollection = db.collection("users");
+
     const email = req.params.email;
     const user = await usersCollection.findOne({ email });
+
     res.json(user);
   } catch (error) {
     console.error("Error fetching user:", error);
@@ -409,16 +458,21 @@ app.use((err, req, res, next) => {
 });
 
 // ===================================
-// SERVER STARTUP
+// SERVER STARTUP (Local Development)
 // ===================================
 if (require.main === module) {
-  app.listen(port, () => {
-    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-    console.log("🚀 KrishiLink Server Started!");
-    console.log(`📍 Running on: http://localhost:${port}`);
-    console.log(`⏰ Started at: ${new Date().toLocaleString()}`);
-    console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-  });
+  const startServer = async () => {
+    await connectToDatabase();
+    app.listen(port, () => {
+      console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+      console.log("🚀 KrishiLink Server Started!");
+      console.log(`📍 Running on: http://localhost:${port}`);
+      console.log(`⏰ Started at: ${new Date().toLocaleString()}`);
+      console.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    });
+  };
+
+  startServer();
 }
 
 // ===================================
