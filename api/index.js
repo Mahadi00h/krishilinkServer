@@ -331,9 +331,7 @@ async function run() {
 run().catch(console.dir);
 
 // Root route
-app.get('/', (req, res) => {
-  res.send('🌾 KrishiLink Server is Running! Server is healthy and ready to handle requests.');
-});
+module.exports = app;
 
 // Start the Express server
 app.listen(port, () => {
