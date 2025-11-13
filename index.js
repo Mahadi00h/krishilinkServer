@@ -11,11 +11,7 @@ const port = process.env.PORT || 5000;
 // ===================================
 app.use(
   cors({
-    origin: [
-      "http://localhost:5173",
-      "https://krishilink.netlify.app",
-      "https://your-netlify-site.netlify.app",
-    ],
+    origin: ["http://localhost:5173", "https://krishilink-mahadi.netlify.app"],
     credentials: true,
   })
 );
@@ -385,12 +381,10 @@ app.put("/interests/status", async (req, res) => {
     res.json(result);
   } catch (error) {
     console.error("Error updating interest status:", error);
-    res
-      .status(500)
-      .json({
-        message: "Failed to update interest status",
-        error: error.message,
-      });
+    res.status(500).json({
+      message: "Failed to update interest status",
+      error: error.message,
+    });
   }
 });
 
